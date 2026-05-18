@@ -1,0 +1,61 @@
+name: Hertz Watcher
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      test_alert:
+        description: 'Send a forced-match test alert via Telegram (true to enable)'
+        type: boolean
+        default: false
+
+# Cancel any in-flight run if a new one starts (cron pile-up safety).
+concurrency:
+  group: hertz-watcher
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.test_alert }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore seen.txt cache
+        uses: actions/cache@v4
+        with:
+          path: seen.txt
+          key: hertz-seen-${{ github.run_id }}
+          restore-keys: |
+            hertz-seen-
+
+      - name: Run poller
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 poller.py
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f log.jsonl ]; then
+            echo "### Last log entry" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            tail -1 log.jsonl >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+  test_alert:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_alert }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run forced-match test
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 test_alert.py
